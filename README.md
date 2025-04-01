@@ -1,11 +1,6 @@
-Each algorithm is a different branch in the repository. The current branch, main, is simply the starter code provided to us. Please go to the other branches to see our scheduling algorithms.
+This is NOT a round robin algorithm. When this branch was created, it was meant to be a round robin algorithm. However, we changed plans and this is now a load balanced power saving algorithm. It migrates tasks from machines that have high utilization to low utilization, balancing task loads. It also shuts off machines that do not have active tasks in order to save energy. 
 
-Algorithms
-1. Greedy
-2. PMapper
-3. E-Eco
-4. Load Balanced Power Saving (branch named roundrobin due to a change of plans)
 
-This is the repository for the Cloud Simulator project for CS 378. To run this project, you can compile the Scheduler with `make scheduler` and run `make simulator` to create your simulator executable. Run `./simulator Input.md` to see your results.
+This is the repository for the Cloud Simulator project for CS 378. To run this project, you can run `make all` to build the executable, which you can then run with `./simulator`.
 
 For questions, please reach out to any of the course staff on via email (anish.palakurthi@utexas.edu, tarun.mohan@utexas.edu, mootaz@austin.utexas.edu) or Ed Discussion.

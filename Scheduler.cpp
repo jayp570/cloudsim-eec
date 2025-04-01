@@ -6,9 +6,31 @@
 //
 
 #include "Scheduler.hpp"
+#include <vector>
+#include <unordered_map>
+#include <random>
+
 
 static bool migrating = false;
 static unsigned active_machines = 16;
+std::unordered_map<VMId_t, bool> isMigrating;
+
+vector<MachineId_t> x86Machines;
+vector<MachineId_t> x86On;
+vector<MachineId_t> x86Off;
+
+vector<MachineId_t> armMachines;
+vector<MachineId_t> armOn;
+vector<MachineId_t> armOff;
+
+vector<MachineId_t> powerMachines;
+vector<MachineId_t> powerOn;
+vector<MachineId_t> powerOff;
+
+vector<MachineId_t> riscvMachines;
+vector<MachineId_t> riscvOn;
+vector<MachineId_t> riscvOff;
+
 
 void Scheduler::Init() {
     // Find the parameters of the clusters
@@ -21,63 +43,130 @@ void Scheduler::Init() {
     // 
     SimOutput("Scheduler::Init(): Total number of machines is " + to_string(Machine_GetTotal()), 3);
     SimOutput("Scheduler::Init(): Initializing scheduler", 1);
-    for(unsigned i = 0; i < active_machines; i++)
-        vms.push_back(VM_Create(LINUX, X86));
-    for(unsigned i = 0; i < active_machines; i++) {
-        machines.push_back(MachineId_t(i));
-    }    
-    for(unsigned i = 0; i < active_machines; i++) {
-        VM_Attach(vms[i], machines[i]);
+
+    // sort out all the machines of different cpu types
+    for(unsigned i = 0; i < Machine_GetTotal(); i++) {
+        if (i < active_machines) {
+            Machine_SetState(MachineId_t(i), S0); // turn on only essential machines
+        } else {
+            Machine_SetState(MachineId_t(i), S5); // keep others off initially
+        }
+        
+        switch (Machine_GetCPUType(MachineId_t(i))) {
+            case X86: x86Machines.push_back(MachineId_t(i)); break;
+            case ARM: armMachines.push_back(MachineId_t(i)); break;
+            case POWER: powerMachines.push_back(MachineId_t(i)); break;
+            case RISCV: riscvMachines.push_back(MachineId_t(i)); break;
+        }
     }
-
-    bool dynamic = false;
-    if(dynamic)
-        for(unsigned i = 0; i<4 ; i++)
-            for(unsigned j = 0; j < 8; j++)
-                Machine_SetCorePerformance(MachineId_t(0), j, P3);
-    // Turn off the ARM machines
-    for(unsigned i = 24; i < Machine_GetTotal(); i++)
-        Machine_SetState(MachineId_t(i), S5);
-
-    SimOutput("Scheduler::Init(): VM ids are " + to_string(vms[0]) + " ahd " + to_string(vms[1]), 3);
 }
 
 void Scheduler::MigrationComplete(Time_t time, VMId_t vm_id) {
     // Update your data structure. The VM now can receive new tasks
+    isMigrating[vm_id] = false;
 }
 
 void Scheduler::NewTask(Time_t now, TaskId_t task_id) {
-    // Get the task parameters
-    //  IsGPUCapable(task_id);
-    //  GetMemory(task_id);
-    //  RequiredVMType(task_id);
-    //  RequiredSLA(task_id);
-    //  RequiredCPUType(task_id);
-    // Decide to attach the task to an existing VM, 
-    //      vm.AddTask(taskid, Priority_T priority); or
-    // Create a new VM, attach the VM to a machine
-    //      VM vm(type of the VM)
-    //      vm.Attach(machine_id);
-    //      vm.AddTask(taskid, Priority_t priority) or
-    // Turn on a machine, create a new VM, attach it to the VM, then add the task
-    //
-    // Turn on a machine, migrate an existing VM from a loaded machine....
-    //
-    // Other possibilities as desired
-    Priority_t priority = (task_id == 0 || task_id == 64)? HIGH_PRIORITY : MID_PRIORITY;
-    if(migrating) {
-        VM_AddTask(vms[0], task_id, priority);
+    TaskInfo_t taskInfo = GetTaskInfo(task_id);
+    CPUType_t cpu = taskInfo.required_cpu;
+    vector<MachineId_t> *machineList;
+
+    switch (cpu) {
+        case X86: machineList = &x86Machines; break;
+        case ARM: machineList = &armMachines; break;
+        case POWER: machineList = &powerMachines; break;
+        case RISCV: machineList = &riscvMachines; break;
     }
-    else {
-        VM_AddTask(vms[task_id % active_machines], task_id, priority);
-    }// Skeleton code, you need to change it according to your algorithm
+
+    MachineId_t bestMachine = -1;
+    double minLoad = 1.1;
+
+    // find a machine to put this task on - choose the most available
+    for (MachineId_t machine : *machineList) {
+        MachineInfo_t info = Machine_GetInfo(machine);
+        if (info.s_state == S0 && (info.memory_size - info.memory_used) >= taskInfo.required_memory) {
+            double load = (double)info.active_tasks / info.num_cpus;
+            if (load < minLoad) {
+                minLoad = load;
+                bestMachine = machine;
+            }
+        }
+    }
+
+    if (bestMachine == -1) {
+        for (MachineId_t machine : *machineList) {
+            if (Machine_GetInfo(machine).s_state == S5) {
+                Machine_SetState(machine, S0);
+                bestMachine = machine;
+                break;
+            }
+        }
+    }
+
+    if (bestMachine != -1) {
+        VMId_t vm = VM_Create(taskInfo.required_vm, cpu);
+        isMigrating[vm] = false;
+        VM_Attach(vm, bestMachine);
+        VM_AddTask(vm, task_id, taskInfo.priority);
+    } else {
+        SimOutput("Task " + to_string(task_id) + " delayed due to lack of resources", 1);
+    }
 }
+
+// Helper function to calculate machine utilization
+double getUtilization(MachineId_t machineId) {
+    MachineInfo_t info = Machine_GetInfo(machineId);
+    return (double)info.active_tasks / info.num_cpus;
+}
+
 
 void Scheduler::PeriodicCheck(Time_t now) {
     // This method should be called from SchedulerCheck()
     // SchedulerCheck is called periodically by the simulator to allow you to monitor, make decisions, adjustments, etc.
     // Unlike the other invocations of the scheduler, this one doesn't report any specific event
     // Recommendation: Take advantage of this function to do some monitoring and adjustments as necessary
+
+    vector<MachineId_t> overloadedMachines;
+    vector<MachineId_t> underutilizedMachines;
+    // sort machines by how much utilization theyre at for load balancing
+    for (unsigned i = 0; i < Machine_GetTotal(); i++) {
+        MachineId_t machine = MachineId_t(i);
+        MachineInfo_t info = Machine_GetInfo(machine);
+        if (info.s_state == S0) {
+            double utilization = (double)info.active_tasks / info.num_cpus;
+            if (utilization < 0.1) {
+                underutilizedMachines.push_back(machine);
+            } else if (utilization > 0.7) {
+                overloadedMachines.push_back(machine);
+            }
+        }
+    }
+    // migrate vms from underutilizated to overloaded machines
+    for (MachineId_t source : overloadedMachines) {
+        for (MachineId_t target : underutilizedMachines) {
+            if (Machine_GetCPUType(source) == Machine_GetCPUType(target)) {
+                for (auto vm : vms) {
+                    if (VM_GetInfo(vm).machine_id == source) {
+                        isMigrating[vm] = true;
+                        VM_Migrate(vm, target);
+                        SimOutput("Migrating VM " + to_string(vm) + " from " + to_string(source) + " to " + to_string(target), 1);
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    // power saving
+    for (MachineId_t machine : underutilizedMachines) {
+        if (Machine_GetInfo(machine).active_tasks == 0) {
+            Machine_SetState(machine, S5);
+            SimOutput("Shutting down idle machine " + to_string(machine), 1);
+        }
+    }
+
+
+
+
 }
 
 void Scheduler::Shutdown(Time_t time) {
@@ -134,12 +223,12 @@ void SchedulerCheck(Time_t time) {
     // This function is called periodically by the simulator, no specific event
     SimOutput("SchedulerCheck(): SchedulerCheck() called at " + to_string(time), 4);
     Scheduler.PeriodicCheck(time);
-    static unsigned counts = 0;
-    counts++;
-    if(counts == 10) {
-        migrating = true;
-        VM_Migrate(1, 9);
-    }
+    // static unsigned counts = 0;
+    // counts++;
+    // if(counts == 10) {
+    //     migrating = true;
+    //     VM_Migrate(1, 9);
+    // }
 }
 
 void SimulationComplete(Time_t time) {
@@ -162,4 +251,3 @@ void SLAWarning(Time_t time, TaskId_t task_id) {
 void StateChangeComplete(Time_t time, MachineId_t machine_id) {
     // Called in response to an earlier request to change the state of a machine
 }
-
