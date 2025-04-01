@@ -4,7 +4,7 @@ Algorithms
 1. Greedy
 2. PMapper
 3. E-Eco
-4. Load Balanced Power Saving (branch named roundrobin due to a change of plans)
+4. Load Balanced Power Saving
 
 This is the repository for the Cloud Simulator project for CS 378. To run this project, you can compile the Scheduler with `make scheduler` and run `make simulator` to create your simulator executable. Run `./simulator Input.md` to see your results.
 
