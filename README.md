@@ -1,4 +1,5 @@
 Each algorithm is a different branch in the repository. The current branch, main, is simply the starter code provided to us. Please go to the other branches to see our scheduling algorithms.
+An algorithm should be able to run only with modifications to Scheduler.cpp. If not, please clone all the files in a branch and run the code. 
 
 Algorithms
 1. Greedy
